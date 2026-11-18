@@ -18,44 +18,53 @@
 # <flag> is the NickelHook !flag file of the mod, relative to the user
 # partition, for example .adds/nickelsync/uninstall. The mod must log
 # "done init" (NickelHook does). Environment: KFW (default ./kfw), ID
-# (default upgrade-test), FROM (4.46.23852), TO (6.0.279225).
+# (default upgrade-test), FROM (4.46.23852), TO (6.0.279225), and FAT=1 for
+# a FAT32 user partition as on a device.
+#
+# The script reaches the device only through kfw (exec, cp), so it works with
+# both kinds of user partition.
 set -u
-OLD=$1 NEW=$2 FLAG=$3
+# Git Bash turns an argument such as /mnt/onboard/x into a Windows path for kfw.exe.
+export MSYS_NO_PATHCONV=1
+OLD=$1 NEW=$2 FLAG=/mnt/onboard/$3
 KFW=${KFW:-./kfw} ID=${ID:-upgrade-test} FROM=${FROM:-4.46.23852} TO=${TO:-6.0.279225}
-ON=vm/$ID/onboard
+FATFLAG=
+[ "${FAT:-0}" = 1 ] && FATFLAG=-fat
 fails=0
 check() { # check <name> <command>: PASS if the command succeeds
   if sh -c "$2" >/dev/null 2>&1; then echo "PASS: $1"; else echo "FAIL: $1"; fails=$((fails+1)); fi
 }
-libs() { $KFW vm exec "$ID" 'ls /usr/local/Kobo/imageformats/ 2>/dev/null'; }
+x() { $KFW vm exec "$ID" "$@"; }   # run a command in the device
+libs() { x 'ls /usr/local/Kobo/imageformats/ 2>/dev/null'; }
 
 $KFW vm stop "$ID" >/dev/null 2>&1
 echo "== 1. old package on $FROM"
-$KFW vm start -fw "$FROM" -name "$ID" -pkg "$OLD" -wait "done init" -time 5m || exit 1
-check "the flag file exists" "test -f '$ON/$FLAG'"
-echo "kfw upgrade test" > "$ON/kfw-marker.txt"
+$KFW vm start -fw "$FROM" -name "$ID" $FATFLAG -pkg "$OLD" -wait "done init" -time 5m || exit 1
+x 'mount | grep " /mnt/onboard "'
+check "the flag file exists" "$KFW vm exec $ID test -f $FLAG"
+x 'echo "kfw upgrade test" > /mnt/onboard/kfw-marker.txt'
 
 echo "== 2. new Kobo.tgz, reboot on $FROM"
-cp "$NEW" "$ON/.kobo/Kobo.tgz"
+$KFW vm cp "$NEW" "$ID:/mnt/onboard/.kobo/Kobo.tgz"
 $KFW vm reboot "$ID" -wait "done init" -time 5m
 libs
-check "Kobo.tgz was taken from .kobo" "test ! -f '$ON/.kobo/Kobo.tgz'"
+check "the boot took Kobo.tgz from .kobo" "$KFW vm exec $ID test ! -f /mnt/onboard/.kobo/Kobo.tgz"
 check "no uninstall on $FROM" "! $KFW vm logs $ID | grep -q uninstalling"
 
 echo "== 3. firmware upgrade to $TO"
 $KFW vm upgrade "$ID" "$TO" -time 2m
 check "the new rootfs has no plugin" "test -z \"\$($KFW vm exec $ID 'ls /usr/local/Kobo/imageformats 2>/dev/null')\""
-check "the user partition stays" "grep -q 'kfw upgrade test' '$ON/kfw-marker.txt' && test -f '$ON/$FLAG'"
+check "the user partition stays" "$KFW vm exec $ID 'grep -q \"kfw upgrade test\" /mnt/onboard/kfw-marker.txt && test -f $FLAG'"
 
 echo "== 4. Kobo.tgz again, reboot on $TO"
-cp "$NEW" "$ON/.kobo/Kobo.tgz"
+$KFW vm cp "$NEW" "$ID:/mnt/onboard/.kobo/Kobo.tgz"
 $KFW vm reboot "$ID" -wait "done init" -time 5m
 libs
 check "no uninstall on $TO" "! $KFW vm logs $ID | grep -q uninstalling"
 $KFW vm shot "$ID" "vm/$ID/step4.png"
 
 echo "== 5. flag deleted, reboot on $TO"
-rm -f "$ON/$FLAG"
+x "rm -f $FLAG"
 $KFW vm reboot "$ID" -wait "uninstalling" -time 5m
 check "the mod uninstalled itself" "$KFW vm logs $ID | grep -q uninstalling"
 check "no plugin is left" "test -z \"\$($KFW vm exec $ID 'ls /usr/local/Kobo/imageformats 2>/dev/null')\""

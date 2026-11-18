@@ -88,10 +88,12 @@ type vmRun struct {
 	Boots    int    `json:"boots"`
 	Started  string `json:"started"`
 	Strace   bool   `json:"strace"`
+	Fat      bool   `json:"fat"` // the user partition is a FAT32 image in the volume fatVolume
 }
 
 func (r *vmRun) container() string { return "kfw-vm-" + r.ID }
 func (r *vmRun) is6x() bool       { return r.Format == "rootfs" }
+func (r *vmRun) fatVolume() string { return r.container() + "-onboard" }
 
 var reID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
@@ -154,8 +156,10 @@ func cmdVM(args []string) (int, error) {
 		switch sub {
 		case "start":
 			return vmStart(rest)
-		case "exec", "logs", "shot", "reboot", "upgrade", "stop":
+		case "exec", "cp", "logs", "shot", "reboot", "upgrade", "stop", "forge":
 			return vmOnDevice(sub, rest)
+		case "setup":
+			return vmMachineSetup(rest)
 		}
 	}
 	return vmOnce(args)
@@ -165,15 +169,19 @@ const vmUsage = `usage:
   kfw vm [flags]                     one run: boot, wait -time, check, report, remove
   kfw vm start [flags]               boot a device and leave it running
   kfw vm exec <id> <command>...      run a shell command in the device
+  kfw vm cp <file> <id>:<path>       copy a file into the device
+  kfw vm cp <id>:<path> <file>       copy a file out of the device
   kfw vm logs <id>                   print the syslog (4.x: logread, 6.x: syslog.txt)
   kfw vm shot <id> [file.png]        save the screen as a PNG
   kfw vm reboot <id> [-wait text] [-time 2m]
-                                     restart Nickel and keep the rootfs; installs a
-                                     .kobo/Kobo.tgz (and on 4.x .kobo/KoboRoot.tgz)
+                                     restart Nickel and keep the rootfs; the boot
+                                     installs .kobo/Kobo.tgz (4.x: also KoboRoot.tgz)
   kfw vm upgrade <id> <version> [-wait text] [-time 2m]
                                      boot a clean rootfs of <version> with the same
                                      user partition, as a firmware update does
+  kfw vm forge <id> <dir>            serve a fake Forgejo from <dir> in the device
   kfw vm stop <id>                   remove the container, its images and the lock
+  kfw vm setup [-remove]             keep qemu-arm registered in the Podman machine
 
 Flags of kfw vm and kfw vm start:`
 
@@ -181,7 +189,7 @@ Flags of kfw vm and kfw vm start:`
 type runFlags struct {
 	fw, pkg, as, name, state, wait *string
 	time                           *time.Duration
-	keep, strace                   *bool
+	keep, strace, fat              *bool
 }
 
 func newRunFlags(name string, wait time.Duration, start bool) (*flag.FlagSet, *runFlags) {
@@ -194,6 +202,7 @@ func newRunFlags(name string, wait time.Duration, start bool) (*flag.FlagSet, *r
 		state:  fs.String("state", "", "use this state folder and keep its user partition onboard/ (default: a new vm/<id>/)"),
 		time:   fs.Duration("time", wait, "how long Nickel runs before kfw checks it (with -wait: the longest wait)"),
 		strace: fs.Bool("strace", false, "log each system call of Nickel to strace.log (qemu-user QEMU_STRACE)"),
+		fat:    fs.Bool("fat", false, "make the user partition a FAT32 image, as on a device (use kfw vm cp and exec for its files)"),
 	}
 	if start {
 		f.wait = fs.String("wait", "", "wait until a syslog line has this text, for example \"done init\"")
@@ -301,7 +310,7 @@ func vmSetup(dir, eng string, f *runFlags) (*vmRun, []*pkgFile, error) {
 	}
 	m := fwManifest(dir, fw)
 	r := &vmRun{ID: id, Firmware: fw, Format: m.Format, QtMajor: m.QtMajor, Image: img,
-		Started: time.Now().Format(time.RFC3339), Strace: *f.strace}
+		Started: time.Now().Format(time.RFC3339), Strace: *f.strace, Fat: *f.fat}
 	if err := ensureARM(eng, img); err != nil {
 		return nil, nil, err
 	}
@@ -311,6 +320,8 @@ func vmSetup(dir, eng string, f *runFlags) (*vmRun, []*pkgFile, error) {
 	if err := r.lock(dir); err != nil {
 		return nil, nil, err
 	}
+	// A new device gets a new FAT image. It lasts until kfw vm stop.
+	exec.Command(eng, "volume", "rm", "-f", r.fatVolume()).Run()
 	fail := func(err error) (*vmRun, []*pkgFile, error) {
 		os.Remove(recordPath(dir, id))
 		return nil, nil, err
@@ -368,24 +379,6 @@ func clearBoot(state string) {
 	}
 }
 
-// stage moves the install files that the user or a mod left in .kobo/ into
-// the package slot, as the boot script of the firmware takes them: Kobo.tgz
-// on any firmware, KoboRoot.tgz only on 4.x.
-func stage(r *vmRun) {
-	names := []string{"Kobo.tgz"}
-	if !r.is6x() {
-		names = append(names, "KoboRoot.tgz")
-	}
-	for _, n := range names {
-		src := filepath.Join(r.State, "onboard", ".kobo", n)
-		if _, err := os.Stat(src); err == nil {
-			if err := os.Rename(src, filepath.Join(r.State, "pkg", n)); err == nil {
-				fmt.Printf("The boot installs .kobo/%s.\n", n)
-			}
-		}
-	}
-}
-
 func vmBoot(dir, eng string, r *vmRun) error {
 	exec.Command(eng, "rm", "-f", r.container()).Run()
 	strace := "0"
@@ -394,7 +387,11 @@ func vmBoot(dir, eng string, r *vmRun) error {
 	}
 	run := exec.Command(eng, "run", "-d", "--name", r.container(), "--privileged", "--platform", "linux/arm/v7",
 		"-e", "KFW_STRACE="+strace,
-		"-v", hostPath(filepath.Join(dir, "cache", "vm"))+":/vm:ro", "-v", hostPath(r.State)+":/state", r.Image, "/bin/sh", "/vm/init.sh")
+		"-v", hostPath(filepath.Join(dir, "cache", "vm"))+":/vm:ro", "-v", hostPath(r.State)+":/state")
+	if r.Fat {
+		run.Args = append(run.Args, "-e", "KFW_FAT=1", "-v", r.fatVolume()+":/fat")
+	}
+	run.Args = append(run.Args, r.Image, "/bin/sh", "/vm/init.sh")
 	run.Stderr = os.Stderr
 	if err := run.Run(); err != nil {
 		return fmt.Errorf("start the container: %w", err)
@@ -475,6 +472,7 @@ func vmTeardown(dir, eng string, r *vmRun) {
 			exec.Command(eng, "rmi", "-f", img).Run()
 		}
 	}
+	exec.Command(eng, "volume", "rm", "-f", r.fatVolume()).Run()
 	os.Remove(recordPath(dir, r.ID))
 	stopKeeper(eng)
 }
@@ -489,6 +487,9 @@ func vmOnDevice(sub string, args []string) (int, error) {
 	dir, eng, err := vmEnv()
 	if err != nil {
 		return 2, err
+	}
+	if sub == "cp" {
+		return vmCopy(dir, eng, append([]string{id}, args...))
 	}
 	if sub == "stop" {
 		r, err := loadRun(dir, id)
@@ -531,6 +532,11 @@ func vmOnDevice(sub string, args []string) (int, error) {
 			return 2, err
 		}
 		return 0, nil
+	case "forge":
+		if len(args) != 1 {
+			return 2, fmt.Errorf("usage: kfw vm forge <id> <dir>")
+		}
+		return vmForge(dir, eng, r, args[0])
 	case "shot":
 		out := filepath.Join(r.State, "screen-"+time.Now().Format("150405")+".png")
 		if len(args) > 0 {
@@ -568,6 +574,9 @@ func vmOnDevice(sub string, args []string) (int, error) {
 	if err := ensureARM(eng, r.Image); err != nil {
 		return 2, err
 	}
+	// Write the files of the user partition to disk, as the firmware does
+	// before a reboot. The FAT image needs it.
+	exec.Command(eng, "exec", r.container(), "sync").Run()
 	exec.Command(eng, "stop", "-t", "5", r.container()).Run()
 	if sub == "reboot" {
 		// Keep the root file system of the device: the mods that the last
@@ -579,7 +588,6 @@ func vmOnDevice(sub string, args []string) (int, error) {
 		r.Image = img
 	}
 	clearBoot(r.State)
-	stage(r)
 	if err := vmBoot(dir, eng, r); err != nil {
 		return 2, err
 	}
@@ -636,13 +644,28 @@ func machineSSH(cmd string) error {
 	return c.Run()
 }
 
-const keeperLoop = `while true; do [ -e /proc/sys/fs/binfmt_misc/qemu-arm ] || cat /usr/lib/binfmt.d/qemu-arm-static.conf > /proc/sys/fs/binfmt_misc/register 2>/dev/null; sleep 1; done`
+// keeperLoop registers qemu-arm again each second when it is gone. If a
+// stale automount hides binfmt_misc, it mounts binfmt_misc again first.
+// One loop runs at a time: it holds the lock /tmp/kfw-binfmt.lock and writes
+// its PID to /tmp/kfw-binfmt.pid. A second loop exits at once, or with the
+// argument "wait" (the service of kfw vm setup) waits for the lock.
+const keeperLoop = `exec 9>/tmp/kfw-binfmt.lock
+if [ "$1" = wait ]; then flock 9; else flock -n 9 || exit 0; fi
+echo $$ > /tmp/kfw-binfmt.pid
+while true; do
+  if [ ! -e /proc/sys/fs/binfmt_misc/qemu-arm ]; then
+    [ -w /proc/sys/fs/binfmt_misc/register ] || { umount -l /proc/sys/fs/binfmt_misc 2>/dev/null; mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc; }
+    cat /usr/lib/binfmt.d/qemu-arm-static.conf > /proc/sys/fs/binfmt_misc/register 2>/dev/null
+  fi
+  sleep 1
+done
+`
 
+// startKeeper starts a keeper loop for the length of a run. It exits at once
+// if a loop runs already, for example the service of kfw vm setup.
 func startKeeper() {
 	b64 := base64.StdEncoding.EncodeToString([]byte(keeperLoop))
-	// A PID file, not pgrep -f: pgrep would match its own ssh command line.
-	machineSSH(`if ! kill -0 $(cat /tmp/kfw-binfmt.pid 2>/dev/null) 2>/dev/null; then echo ` + b64 +
-		` | base64 -d > /tmp/kfw-binfmt.sh; nohup sh /tmp/kfw-binfmt.sh >/dev/null 2>&1 & echo $! > /tmp/kfw-binfmt.pid; fi`)
+	machineSSH(`echo ` + b64 + ` | base64 -d > /tmp/kfw-binfmt.sh; nohup sh /tmp/kfw-binfmt.sh >/dev/null 2>&1 &`)
 }
 
 // stopKeeper stops the keeper loop when no kfw-vm container runs.
@@ -656,7 +679,8 @@ func stopKeeper(eng string) {
 			return
 		}
 	}
-	machineSSH(`kill $(cat /tmp/kfw-binfmt.pid 2>/dev/null) 2>/dev/null; rm -f /tmp/kfw-binfmt.pid`)
+	// The service of kfw vm setup is not stopped: systemd owns it.
+	machineSSH(`systemctl is-active -q kfw-binfmt 2>/dev/null || kill $(cat /tmp/kfw-binfmt.pid 2>/dev/null) 2>/dev/null`)
 }
 
 // lastLine returns the error line of engine output: the last line that has

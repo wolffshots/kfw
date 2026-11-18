@@ -9,6 +9,8 @@
 # Mounts (kfw vm):
 #   /vm     this folder and vmshim.so, read-only
 #   /state  hwcfg.img, fb0.raw, onboard/ (the user partition), aux/, pkg/
+#   /fat    with KFW_FAT=1: a volume that holds onboard.img, a FAT32 image
+#           that is the user partition, as on a device
 # Writes /state/nickel.log (stdout and stderr of Nickel) and
 # /state/syslog.txt.
 
@@ -21,7 +23,19 @@ mkdir -p /dev/disk/by-partlabel
 ln -sf /state/hwcfg.img /dev/disk/by-partlabel/hwcfg
 
 mkdir -p /mnt/onboard /mnt/aux
-mount --bind /state/onboard /mnt/onboard
+if [ "$KFW_FAT" = 1 ]; then
+    # A device has a FAT32 user partition: no symlinks, no permissions,
+    # names without case, small inode numbers.
+    if [ ! -f /fat/onboard.img ]; then
+        dd if=/dev/zero of=/fat/onboard.img bs=1M count=0 seek=256 2>/dev/null
+        mkfs.vfat -F 32 -n KOBOeReader /fat/onboard.img >/dev/null || echo "kfw: mkfs.vfat failed"
+    fi
+    mount -t vfat -o loop,noatime,nodiratime,shortname=mixed,utf8 /fat/onboard.img /mnt/onboard ||
+        echo "kfw: the FAT user partition did not mount"
+else
+    mount --bind /state/onboard /mnt/onboard
+fi
+mkdir -p /mnt/onboard/.kobo
 mount --bind /state/aux /mnt/aux
 
 # A battery at 80 %, not charging.
@@ -48,31 +62,41 @@ for f in /sbin/poweroff /sbin/reboot /sbin/halt /usr/bin/export-usb.sh \
     fi
 done
 
-# Install the package as the boot script of the firmware does. 4.x (rcS):
+# Install packages as the boot script of the firmware does. 4.x (rcS):
 # Kobo.tgz into /usr/local/Kobo, KoboRoot.tgz into /. 5.x and 6.x
 # (/etc/init.d/ota): Kobo.tgz only, and each file of the archive that exists
 # in /usr/local/Kobo is removed first. KoboRoot.tgz is not read.
-if [ -f /usr/libexec/platform/nickel-env.sh ]; then
-    if [ -f /state/pkg/Kobo.tgz ]; then
-        echo "kfw: installing Kobo.tgz (6.x ota)"
-        tar -tzf /state/pkg/Kobo.tgz | while read -r f; do
-            if [ -f "/usr/local/Kobo/$f" ] || [ -L "/usr/local/Kobo/$f" ]; then
-                rm -f "/usr/local/Kobo/$f"
-            fi
-        done
-        tar -xzf /state/pkg/Kobo.tgz -C /usr/local/Kobo || echo "kfw: Kobo.tgz failed"
+# kfw_install <dir> <delete>: install from <dir>. The firmware deletes the files
+# in .kobo/ after the install. The package slot /state/pkg of kfw stays.
+kfw_install() {
+    if [ -f /usr/libexec/platform/nickel-env.sh ]; then
+        if [ -f "$1/Kobo.tgz" ]; then
+            echo "kfw: installing $1/Kobo.tgz (6.x ota)"
+            tar -tzf "$1/Kobo.tgz" | while read -r f; do
+                if [ -f "/usr/local/Kobo/$f" ] || [ -L "/usr/local/Kobo/$f" ]; then
+                    rm -f "/usr/local/Kobo/$f"
+                fi
+            done
+            tar -xzf "$1/Kobo.tgz" -C /usr/local/Kobo || echo "kfw: Kobo.tgz failed"
+            [ "$2" = delete ] && rm -f "$1/Kobo.tgz"
+        fi
+        [ -f "$1/KoboRoot.tgz" ] && echo "kfw: $1/KoboRoot.tgz ignored (6.x does not read it)"
+    else
+        if [ -f "$1/Kobo.tgz" ]; then
+            echo "kfw: installing $1/Kobo.tgz (4.x rcS)"
+            tar -xzf "$1/Kobo.tgz" -C /usr/local/Kobo || echo "kfw: Kobo.tgz failed"
+            [ "$2" = delete ] && rm -f "$1/Kobo.tgz"
+        fi
+        if [ -f "$1/KoboRoot.tgz" ]; then
+            echo "kfw: installing $1/KoboRoot.tgz (4.x rcS)"
+            tar -xzf "$1/KoboRoot.tgz" -C / || echo "kfw: KoboRoot.tgz failed"
+            [ "$2" = delete ] && rm -f "$1/KoboRoot.tgz"
+        fi
     fi
-    [ -f /state/pkg/KoboRoot.tgz ] && echo "kfw: KoboRoot.tgz ignored (6.x does not read it)"
-else
-    if [ -f /state/pkg/Kobo.tgz ]; then
-        echo "kfw: installing Kobo.tgz (4.x rcS)"
-        tar -xzf /state/pkg/Kobo.tgz -C /usr/local/Kobo || echo "kfw: Kobo.tgz failed"
-    fi
-    if [ -f /state/pkg/KoboRoot.tgz ]; then
-        echo "kfw: installing KoboRoot.tgz (4.x rcS)"
-        tar -xzf /state/pkg/KoboRoot.tgz -C / || echo "kfw: KoboRoot.tgz failed"
-    fi
-fi
+}
+kfw_install /state/pkg keep
+kfw_install /mnt/onboard/.kobo delete
+sync
 
 [ -p /tmp/nickel-hardware-status ] || mkfifo /tmp/nickel-hardware-status
 ln -sf /state/fb0.raw /dev/fb0
