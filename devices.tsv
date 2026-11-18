@@ -1,0 +1,6 @@
+# The devices that kfw sync asks the Kobo update API about. Columns are
+# separated by one tab. model: the Kobo device ID number (koboutils, kobo/device.go).
+model	name
+390	Kobo Libra Colour
+391	Kobo Clara BW
+393	Kobo Clara Colour

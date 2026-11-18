@@ -1,0 +1,9 @@
+# The mods that kfw sync checks. Columns are separated by one tab.
+# sources: paths relative to this file, separated by commas.
+# qt: the Qt majors the mod builds for: 5, 6, or 5,6 for a source that builds for both.
+# baseline: the firmware the mod was tested on (one for each Qt major, separated by commas), or - for the newest of each Qt major.
+# role: check (a failure sets exit code 1) or info.
+name	sources	qt	baseline	role
+NickelSync	../projects/nickelsync/src	5	4.46.23852	check
+kpm hook	../projects/kpm/hook/src	5	4.46.23852	check
+NickelHardcover	../projects/NickelHardcover-src/hook/src	5	-	info

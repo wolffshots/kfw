@@ -1,0 +1,19 @@
+# Firmware files and everything kfw makes from them stay local.
+/firmware/
+/downloads/
+/cache/
+/vm/
+/report.md
+/available.tsv
+
+# Research notes and local state
+/catalog.md
+/dual-qt-research.md
+HANDOFF.md
+
+# Build output
+/kfw
+/kfw.exe
+
+# podman machine ssh from Git Bash writes the host key to a file NUL
+NUL
