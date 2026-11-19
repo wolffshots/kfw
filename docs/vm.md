@@ -93,7 +93,7 @@ A package manager or an updater in the device can test its downloads without the
 | `<dir>/registry.toml` | Served at `/<owner>/<repo>/raw/branch/<ref>/registry.toml`. |
 | `<dir>/repos/<repo>/<tag>/<asset>` | Releases. `releases/latest` is the greatest tag name. |
 
-The API has `/api/v1/version`, `/api/v1/repos/o/<repo>/releases/latest`, `/api/v1/repos/o/<repo>/releases/tags/<tag>` and the downloads under `/dl/`. The owner is always `o`. The server makes a new self-signed certificate at each start: tell the client in the device to trust `/state/forge/ca.pem`, for example with `SSL_CERT_FILE`. A reboot stops the server. Run `kfw vm forge` again after it.
+The API has `/api/v1/version`, `/api/v1/repos/o/<repo>/releases/latest`, `/api/v1/repos/o/<repo>/releases/tags/<tag>` and the downloads under `/dl/`. The owner is always `o`. The server makes a new self-signed certificate at each start: tell the client in the device to trust `/state/forge/ca.pem`, for example with `SSL_CERT_FILE`. A reboot stops the server. Run `kfw vm forge` again after it. A second `kfw vm forge` in the same boot stops the running server and starts a new one with the new data.
 
 The client must have a current TLS stack, for example a Go program such as kpm. The busybox `wget` of the firmware cannot connect: its TLS client sends no signature algorithms, and the server refuses the handshake. The firmware has no `curl`.
 

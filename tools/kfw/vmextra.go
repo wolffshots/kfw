@@ -73,6 +73,13 @@ func vmForge(dir, eng string, r *vmRun, data string) (int, error) {
 	if err := b.Run(); err != nil {
 		return 2, fmt.Errorf("build fakeforge: %w", err)
 	}
+	// Stop a server that an earlier "kfw vm forge" started in this boot. Else
+	// the new server cannot bind the port, and ca.pem no longer matches the
+	// old server.
+	ensureARM(eng, r.Image)
+	exec.Command(eng, "exec", r.container(), "sh", "-c",
+		"for p in $(pidof fakeforge); do kill $p; done; "+
+			"i=0; while pidof fakeforge >/dev/null && [ $i -lt 10 ]; do sleep 1; i=$((i+1)); done").Run()
 	root := filepath.Join(r.State, "forge")
 	if err := os.RemoveAll(root); err != nil {
 		return 2, err
@@ -80,7 +87,6 @@ func vmForge(dir, eng string, r *vmRun, data string) (int, error) {
 	if err := copyTree(data, root); err != nil {
 		return 2, err
 	}
-	ensureARM(eng, r.Image)
 	if err := exec.Command(eng, "exec", "-d", r.container(), "sh", "-c",
 		"exec /vm/fakeforge -root /state/forge >> /state/forge/forge.log 2>&1").Run(); err != nil {
 		return 2, fmt.Errorf("start fakeforge: %w", err)
