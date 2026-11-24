@@ -224,6 +224,10 @@ func vmOnce(args []string) (int, error) {
 	if err := fs.Parse(args); err != nil {
 		return 2, nil
 	}
+	// An unknown subcommand such as "list" must not boot a default device.
+	if fs.NArg() > 0 {
+		return 2, fmt.Errorf("kfw vm: unknown command or argument %q (run kfw vm -h)", fs.Arg(0))
+	}
 	dir, eng, err := vmEnv()
 	if err != nil {
 		return 2, err
@@ -261,6 +265,9 @@ func vmStart(args []string) (int, error) {
 	fs, f := newRunFlags("vm start", 2*time.Minute, true)
 	if err := fs.Parse(args); err != nil {
 		return 2, nil
+	}
+	if fs.NArg() > 0 {
+		return 2, fmt.Errorf("kfw vm start: unknown argument %q", fs.Arg(0))
 	}
 	dir, eng, err := vmEnv()
 	if err != nil {
