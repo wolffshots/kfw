@@ -131,7 +131,7 @@ The design follows the Nickel VM of NickelInkSync PR 27 (github.com/dkuester/Nic
 - `poweroff`, `reboot`, USB export, `wpa_supplicant` and `dhcpcd` are stubs. There is no Wi-Fi, touch input or sync.
 - Nickel is process 1 of the container. So the container runs while Nickel runs.
 
-Both firmware lines boot to the language screen in about 30 seconds. Nickel 4.x shows no fonts: the 4.x `KoboRoot.tgz` has none, and the base rootfs of a device has them.
+Both firmware lines boot to the language screen in about 30 seconds. On 4.x, `init.sh` starts Nickel without the `-skipFontLoad` flag of rcS. With the flag, the font database stays empty in the emulator and all text draws as boxes. Without it, `libkobo.so` loads the fonts of `/usr/local/Trolltech/QtEmbedded-4.6.2-arm/lib/fonts` at start. `kfw vm reboot` does not write `init.sh` again. A device that runs from an older `kfw` gets the change after `kfw vm stop` and `kfw vm start`.
 
 ## Differences from a device
 

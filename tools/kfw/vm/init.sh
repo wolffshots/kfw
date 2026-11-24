@@ -156,7 +156,11 @@ EOF
     export NICKEL_HOME=/mnt/onboard/.kobo LD_LIBRARY_PATH=/usr/local/Kobo LANG=en_US.UTF-8
     /bin/dbus-uuidgen > /var/lib/dbus/machine-id 2>/dev/null
     /bin/dbus-daemon --system --fork 2>/dev/null || dbus-daemon --system --fork
-    ARGS="-platform kobo -skipFontLoad"
+    # rcS also passes -skipFontLoad, but then the font database stays
+    # empty in the emulator and all text draws as boxes. Without the flag,
+    # libkobo.so (KoboFontDatabase) loads the fonts of
+    # /usr/local/Trolltech/QtEmbedded-4.6.2-arm/lib/fonts at start.
+    ARGS="-platform kobo"
 fi
 DBUS_SESSION_BUS_ADDRESS=$(dbus-daemon --session --print-address --fork)
 export DBUS_SESSION_BUS_ADDRESS
