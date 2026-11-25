@@ -9,6 +9,46 @@
 
 Nickel is the Kobo reading app. Mods such as NickelMenu, NickelDBus, kpm and NickelSync load into it as Qt plugins (through NickelHook) and call its functions by symbol name. A firmware update can rename or remove a function. Firmware 6.x moves from Qt 5 to Qt 6, and a Qt 5 mod does not load on it.
 
+## Screenshots
+
+`kfw vm shot` saves the screen of an emulated device. These devices run kpm and NickelMenu:
+
+| 4.46.23852 (Qt 5), Home | 6.0.279225 (Qt 6), Home | 6.0.279225, More page with the kpm row |
+|---|---|---|
+| ![Nickel 4.46 Home screen in kfw vm](docs/media/vm-home-4.46.png) | ![Nickel 6.0 Home screen in kfw vm](docs/media/vm-home-6.0.png) | ![Nickel 6.0 More page in kfw vm](docs/media/vm-more-6.0.png) |
+
+`kfw check -qt 5,6 hook/src` on the kpm hook (shortened):
+
+```
+| Firmware | Qt | hook/src |
+|---|---|---|
+| 6.0.279225 | 6 | OK, baseline |
+| 6.0.274403 | 6 | OK |
+| 5.18.270971 | 6 | OK |
+| 4.46.23852 | 5 | OK, baseline |
+| 4.45.23697 | 5 | OK |
+
+Checked names: 40 symbols, 7 signals, 1 slots, 0 invokeMethod names, 2 class names, 3 object names.
+```
+
+`kfw test Kobo.tgz` on the kpm package (shortened):
+
+```
+# Package test: Kobo.tgz
+
+Install file: Kobo.tgz, extracted into /usr/local/Kobo. Files: 6.
+
+| Firmware | Qt | Result |
+|---|---|---|
+| 6.0.279225 | 6.5.2 | OK |
+| 5.18.270971 | 6.5.2 | OK |
+| 4.46.23852 | 5.2.1 | OK |
+
+## 6.0.279225: OK
+
+- INFO: `/usr/local/Kobo/imageformats/libnkpm.so` is a Qt 5 plugin. Qt 6 skips it without loading it.
+```
+
 ## Background
 
 `kfw` started in November 2026 as shell scripts that indexed `libnickel` to design and check two mods: NickelSync (a "Sync now" item and reading position sync) and the NickelHook UI of kpm (a package manager for Kobo). Then Kobo offered the firmware 6.0 beta to the Libra Colour, Clara BW and Clara Colour. It runs Qt 6, so neither mod loaded.
@@ -66,6 +106,8 @@ sh examples/upgrade-test.sh old/KoboRoot.tgz build/Kobo.tgz .adds/mymod/uninstal
 | `kfw vm start\|exec\|cp\|logs\|shot\|reboot\|upgrade\|forge\|stop` | One emulated device across boots. |
 | `kfw vm setup [-remove]` | Keeps ARM emulation registered in the Podman machine. |
 | `kfw qtmeta <library>` | Prints the Qt signals, slots and methods of a library as JSON. |
+
+The emulator runs several times slower than a device. It has no e-ink, Wi-Fi or touch input. It shows that Nickel starts, that the plugin loads and what the mod does with its files. It does not replace a device test.
 
 ## Layout
 
