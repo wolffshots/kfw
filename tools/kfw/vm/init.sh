@@ -68,6 +68,12 @@ done
 # in /usr/local/Kobo is removed first. KoboRoot.tgz is not read.
 # kfw_install <dir> <delete>: install from <dir>. The firmware deletes the files
 # in .kobo/ after the install. The package slot /state/pkg of kfw stays.
+# tar -m gives each file the time of the install, not its time in the
+# archive. kfw vm reboot keeps the root file system with podman commit, and
+# podman overlay storage (metacopy=on) finds a changed file by size and mtime
+# only. A mod package often has mtime 0 on each file, and an update can keep
+# the size of a library: without -m the commit missed such an update.
+# examples/reboot-update-test.sh checks it.
 kfw_install() {
     if [ -f /usr/libexec/platform/nickel-env.sh ]; then
         if [ -f "$1/Kobo.tgz" ]; then
@@ -77,19 +83,19 @@ kfw_install() {
                     rm -f "/usr/local/Kobo/$f"
                 fi
             done
-            tar -xzf "$1/Kobo.tgz" -C /usr/local/Kobo || echo "kfw: Kobo.tgz failed"
+            tar -xzmf "$1/Kobo.tgz" -C /usr/local/Kobo || echo "kfw: Kobo.tgz failed"
             [ "$2" = delete ] && rm -f "$1/Kobo.tgz"
         fi
         [ -f "$1/KoboRoot.tgz" ] && echo "kfw: $1/KoboRoot.tgz ignored (6.x does not read it)"
     else
         if [ -f "$1/Kobo.tgz" ]; then
             echo "kfw: installing $1/Kobo.tgz (4.x rcS)"
-            tar -xzf "$1/Kobo.tgz" -C /usr/local/Kobo || echo "kfw: Kobo.tgz failed"
+            tar -xzmf "$1/Kobo.tgz" -C /usr/local/Kobo || echo "kfw: Kobo.tgz failed"
             [ "$2" = delete ] && rm -f "$1/Kobo.tgz"
         fi
         if [ -f "$1/KoboRoot.tgz" ]; then
             echo "kfw: installing $1/KoboRoot.tgz (4.x rcS)"
-            tar -xzf "$1/KoboRoot.tgz" -C / || echo "kfw: KoboRoot.tgz failed"
+            tar -xzmf "$1/KoboRoot.tgz" -C / || echo "kfw: KoboRoot.tgz failed"
             [ "$2" = delete ] && rm -f "$1/KoboRoot.tgz"
         fi
     fi
